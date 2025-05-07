@@ -1,24 +1,25 @@
 from dataclasses import dataclass
 import argparse
+import glob
 
 
 @dataclass
-class Config:
-  inDir: str
+class Args:
+  files: list[str]
   outDir: str
   types: frozenset
 
 
-def parseCli() -> Config:
-  description = "Convert PicoScenes CSI data to numpy ndarray"
+def parseCli() -> Args:
+  description = "Convert PicoScenes .csi file to numpy .npy file"
   parser = argparse.ArgumentParser(description=description)
   parser.add_argument(
     "-i",
     "--input",
     type=str,
+    nargs="+",
     metavar="",
-    default="in",
-    help='Specify input directory, default = "in"',
+    help="Specify input .csi file",
   )
   parser.add_argument(
     "-o",
@@ -76,4 +77,7 @@ def parseCli() -> Config:
   if args.timestamp:
     types.add("timestamp")
 
-  return Config(inDir=args.input, outDir=args.output, types=frozenset(types))
+  files: list[str] = []
+  for input in args.input:
+    files.extend(glob.glob(input, recursive=True))
+  return Args(files=files, outDir=args.output, types=frozenset(types))
