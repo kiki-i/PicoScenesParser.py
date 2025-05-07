@@ -4,6 +4,8 @@ Convert PicoScenes `.csi` file to numpy `.npy` file. Significantly reduces memor
 
 An example using the library [libpico](https://github.com/kiki-i/libpico).
 
+## Usage
+
 ```
 optional arguments:
   -h, --help       show this help message and exit
