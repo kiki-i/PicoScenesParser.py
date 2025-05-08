@@ -5,56 +5,19 @@ from pathlib import Path
 from tqdm import tqdm
 import numpy as np
 
-from libpicoFrame import LibpicoRaw
 from parsecli import parseCli
 from PicoParser import Parser
 
 
-def libpicoFrame2timedCsi(
-  raw: LibpicoRaw, interpolate: bool = False
-) -> tuple[np.datetime64, np.ndarray, np.ndarray, np.ndarray]:
-  rawTimesteampNs: int = raw.rxSBasic.systemTime
-  timestamp = np.datetime64(rawTimesteampNs, "ns")
+def timedCsi2numpy(
+  dataList: list[tuple[np.datetime64, np.ndarray, np.ndarray, np.ndarray]],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+  timestampNp = np.array([x[0] for x in dataList])
+  csiNp = np.array([x[1] for x in dataList])
+  magNp = np.array([x[2] for x in dataList])
+  phaseNp = np.array([x[3] for x in dataList])
 
-  shape: tuple = (raw.csi.nTones, raw.csi.nTx, raw.csi.nRx)
-  csiSize = raw.csi.csiSize
-  realNp = np.array([raw.csi.csiRealPtr[i] for i in range(csiSize)], dtype=np.float32)
-  imgNp = np.array([raw.csi.csiImagPtr[i] for i in range(csiSize)], dtype=np.float32)
-  csiNp = realNp + 1j * imgNp
-  csiNp = csiNp.reshape(shape)
-
-  magnitudeSize = raw.csi.magnitudeSize
-  magNp = np.array(
-    [raw.csi.magnitudePtr[i] for i in range(magnitudeSize)], dtype=np.float32
-  )
-  magNp = magNp.reshape(shape)
-
-  phaseSize = raw.csi.phaseSize
-  phaseNp = np.array([raw.csi.phasePtr[i] for i in range(phaseSize)], dtype=np.float32)
-  phaseNp = phaseNp.reshape(shape)
-
-  if not interpolate:
-    size = raw.csi.subcarrierIndicesSize
-    subcarrierIdx = tuple(raw.csi.subcarrierIndicesPtr[i] for i in range(size))
-    csiNp = removeInterpolation(csiNp, subcarrierIdx)
-    magNp = removeInterpolation(magNp, subcarrierIdx)
-    phaseNp = removeInterpolation(phaseNp, subcarrierIdx)
-
-  return timestamp, csiNp, magNp, phaseNp
-
-
-def removeInterpolation(csi: np.ndarray, subcarrierIdx: tuple) -> np.ndarray:
-  interpolatedSubcarrierIdx = (-1, 0, 1)
-  realSubcarrierIdx = np.nonzero(~np.isin(subcarrierIdx, interpolatedSubcarrierIdx))
-  return csi[realSubcarrierIdx]
-
-
-def appendDict(d: dict[str, list], k: str, v, create: bool = False):
-  if k in d:
-    d[k].append(v)
-  else:
-    if create:
-      d[k] = [v]
+  return timestampNp, csiNp, magNp, phaseNp
 
 
 if __name__ == "__main__":
@@ -66,15 +29,20 @@ if __name__ == "__main__":
     filePath = Path(file).expanduser()
     if args.types:
       outDir.mkdir(parents=True, exist_ok=True)
-      outDict = {x: [] for x in args.types}
 
-      for libpicoFrame in parser.parseFile(filePath):
-        timestamp, csi, mag, phase = libpicoFrame2timedCsi(libpicoFrame)
-        appendDict(outDict, "timestamp", timestamp)
-        appendDict(outDict, "csi", csi)
-        appendDict(outDict, "mag", mag)
-        appendDict(outDict, "phase", phase)
+      frameIndices = parser.scanFile(filePath)
+      parsedList = parser.parseFile(filePath, frameIndices)
+      timestampNp, csiNp, magNp, phaseNp = timedCsi2numpy(parsedList)
 
-      for dataType in outDict.keys():
-        filename = filePath.with_suffix(f".{dataType}.npy").name
-        np.save(outDir / filename, outDict[dataType])
+      if "timestamp" in args.types:
+        filename = filePath.with_suffix(".timestamp.npy").name
+        np.save(outDir / filename, timestampNp)
+      if "csi" in args.types:
+        filename = filePath.with_suffix(".csi.npy").name
+        np.save(outDir / filename, csiNp)
+      if "mag" in args.types:
+        filename = filePath.with_suffix(".mag.npy").name
+        np.save(outDir / filename, magNp)
+      if "phase" in args.types:
+        filename = filePath.with_suffix(".phase.npy").name
+        np.save(outDir / filename, phaseNp)
