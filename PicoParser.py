@@ -65,11 +65,8 @@ class Parser:
 
         if libpicoRawPtr is None:
           break
-        out = LibpicoRaw()
-        ctypes.memmove(
-          ctypes.addressof(out),
-          libpicoRawPtr,
-          ctypes.sizeof(out),
-        )
-        yield out
-        self.__lib.freeLibpicoRaw(libpicoRawPtr)
+
+        try:
+          yield libpicoRawPtr.contents
+        finally:
+          self.__lib.freeLibpicoRaw(libpicoRawPtr)

@@ -2,7 +2,7 @@
 
 Convert PicoScenes `.csi` file to numpy `.npy` file. Significantly reduces memory usage compared to the [PicoScenes-Python-Toolbox](https://github.com/wifisensing/PicoScenes-Python-Toolbox).
 
-An example using the library [libpico](https://github.com/kiki-i/libpico).
+An example using the [libpico](https://github.com/kiki-i/libpico) library.
 
 ## Usage
 
