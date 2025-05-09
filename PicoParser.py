@@ -1,8 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import ctypes
-import io
-import itertools
+import mmap
 import os
 import struct
 import sys
@@ -12,142 +11,127 @@ import numpy as np
 from libpicoFrame import LibpicoRaw
 
 
-def libpicoFrame2timedCsi(
-  raw: LibpicoRaw, interpolate: bool = False
-) -> tuple[np.datetime64, np.ndarray, np.ndarray, np.ndarray]:
-  rawTimesteampNs: int = raw.rxSBasic.systemTime
-  timestamp = np.datetime64(rawTimesteampNs, "ns")
+if sys.platform == "win32":
+  libpico = ctypes.CDLL("./libpico.dll")
+else:
+  libpico = ctypes.CDLL("./libpico.so")
 
-  shape: tuple = (raw.csi.nTones, raw.csi.nTx, raw.csi.nRx)
-  csiSize = raw.csi.csiSize
-  # realNp = np.array([raw.csi.csiRealPtr[i] for i in range(csiSize)], dtype=np.float32)
-  # imgNp = np.array([raw.csi.csiImagPtr[i] for i in range(csiSize)], dtype=np.float32)
-  realNp = np.frombuffer(
-    (ctypes.c_float * csiSize).from_address(
-      ctypes.addressof(raw.csi.csiRealPtr.contents)
-    ),
-    dtype=np.float32,
-  )
-  imgNp = np.frombuffer(
-    (ctypes.c_float * csiSize).from_address(
-      ctypes.addressof(raw.csi.csiImagPtr.contents)
-    ),
-    dtype=np.float32,
-  )
-  csiNp = realNp + 1j * imgNp
-  csiNp = csiNp.reshape(shape)
+libpico.getLibpicoCsiFromBuffer.restype = ctypes.POINTER(LibpicoRaw)
+libpico.getLibpicoCsiFromBuffer.argtypes = [
+  ctypes.POINTER(ctypes.c_uint8),
+  ctypes.c_uint32,
+  ctypes.c_bool,
+]
 
-  magnitudeSize = raw.csi.magnitudeSize
-  # magNp = np.array(
-  #   [raw.csi.magnitudePtr[i] for i in range(magnitudeSize)], dtype=np.float32
-  # ).reshape(shape)
-  magNp = np.frombuffer(
-    (ctypes.c_float * magnitudeSize).from_address(
-      ctypes.addressof(raw.csi.magnitudePtr.contents)
-    ),
-    dtype=np.float32,
-  ).reshape(shape)
-
-  phaseSize = raw.csi.phaseSize
-  # phaseNp = np.array([raw.csi.phasePtr[i] for i in range(phaseSize)], dtype=np.float32).reshape(shape)
-  phaseNp = np.frombuffer(
-    (ctypes.c_float * phaseSize).from_address(
-      ctypes.addressof(raw.csi.phasePtr.contents)
-    ),
-    dtype=np.float32,
-  ).reshape(shape)
-
-  if not interpolate:
-    size = raw.csi.subcarrierIndicesSize
-    subcarrierIdx = tuple(raw.csi.subcarrierIndicesPtr[i] for i in range(size))
-    csiNp = removeInterpolation(csiNp, subcarrierIdx)
-    magNp = removeInterpolation(magNp, subcarrierIdx)
-    phaseNp = removeInterpolation(phaseNp, subcarrierIdx)
-
-  return timestamp, csiNp, magNp, phaseNp
-
-
-def removeInterpolation(csi: np.ndarray, subcarrierIdx: tuple) -> np.ndarray:
-  interpolatedSubcarrierIdx = (-1, 0, 1)
-  realSubcarrierIdx = np.nonzero(~np.isin(subcarrierIdx, interpolatedSubcarrierIdx))
-  return csi[realSubcarrierIdx]
+libpico.freeLibpicoRaw.restype = ctypes.c_bool
+libpico.freeLibpicoRaw.argtypes = [ctypes.POINTER(LibpicoRaw)]
 
 
 class Parser:
-  def __init__(self) -> None:
-    self.__initLib()
+  def __init__(self, filePath: Path) -> None:
+    self.__filePath = filePath
+    self.__file = open(self.__filePath, "rb")
+    self.__fileMmap = mmap.mmap(self.__file.fileno(), 0, access=mmap.ACCESS_READ)
+    self.__fileMmapView = memoryview(self.__fileMmap)
 
-    self._payloadLenBuffer = bytearray(4)
+  def __enter__(self):
+    return self
 
-  def __initLib(self) -> None:
-    if sys.platform == "win32":
-      lib = ctypes.CDLL("./libpico.dll")
-    else:
-      lib = ctypes.CDLL("./libpico.so")
+  def __exit__(self, exc_type, exc_val, exc_tb):
+    self.__fileMmapView.release()
+    self.__fileMmap.close()
+    self.__file.close()
 
-    lib.getLibpicoCsiFromBuffer.restype = ctypes.POINTER(LibpicoRaw)
-    lib.getLibpicoCsiFromBuffer.argtypes = [
-      ctypes.POINTER(ctypes.c_uint8),
-      ctypes.c_uint32,
-      ctypes.c_bool,
-    ]
-
-    lib.freeLibpicoRaw.restype = ctypes.c_bool
-    lib.freeLibpicoRaw.argtypes = [ctypes.POINTER(LibpicoRaw)]
-
-    self.__lib = lib
-
-  def scanFile(self, filePath: Path) -> list[tuple[int, int]]:
-    fileSize = os.path.getsize(filePath)
-
+  def scanFile(self) -> list[tuple[int, int]]:
+    fileSize = os.path.getsize(self.__filePath)
     frameIndices: list[tuple[int, int]] = []
-    with open(filePath, "rb") as f:
-      while True:
-        idx = f.tell()
 
-        n = f.readinto(self._payloadLenBuffer)
-        if n != 4:
-          break
-
-        payloadLen = struct.unpack("<I", self._payloadLenBuffer)[0]
-        if payloadLen <= 0:
-          break
-
-        frameLength = 4 + payloadLen
-        f.seek(payloadLen, 1)
-        if f.tell() > fileSize:
-          break
-
-        frameIndices.append((idx, frameLength))
+    mmView = self.__fileMmapView
+    idx = 0
+    while idx + 4 <= fileSize:
+      payloadLenBuffer = mmView[idx : idx + 4]
+      payloadLen = struct.unpack("<I", payloadLenBuffer)[0]
+      if payloadLen <= 0 or idx + (frameLength := 4 + payloadLen) > fileSize:
+        break
+      frameIndices.append((idx, frameLength))
+      idx += frameLength
 
     return frameIndices
 
   def parseFile(
-    self, filePath: Path, frameIndices: list[tuple[int, int]], nThread: int = 0
+    self, frameIndices: list[tuple[int, int]], setThread: int = 0
   ) -> list[tuple[np.datetime64, np.ndarray, np.ndarray, np.ndarray]]:
-    maxWorkers = os.cpu_count()
-    maxWorkers = maxWorkers if maxWorkers else 1
-    maxWorkers = (maxWorkers + 1) // 2
+    maxWorkers = max(1, ((os.cpu_count() or 1) + 1) // 2)
+    nWorkers = setThread if 0 < setThread < maxWorkers else maxWorkers
 
-    nWorkers = nThread if nThread > 0 and nThread < maxWorkers else maxWorkers
-    # timedCsi = list(map(self.parseLibpicoFrame, itertools.repeat(f), frameIndices))
     with ThreadPoolExecutor(max_workers=nWorkers) as executor:
-      timedCsi = list(
-        executor.map(self.parseLibpicoFrame, itertools.repeat(filePath), frameIndices)
-      )
+      timedCsi = list(executor.map(self.parseLibpicoFrame, frameIndices))
     return timedCsi
 
   def parseLibpicoFrame(
-    self, filePath: Path, frameIdx: tuple[int, int]
+    self, frameIdx: tuple[int, int]
   ) -> tuple[np.datetime64, np.ndarray, np.ndarray, np.ndarray]:
-    with open(filePath, "rb") as f:
-      idx, length = frameIdx
+    idx, length = frameIdx
 
-      buffer = (ctypes.c_ubyte * length)()
-      bufferMv = memoryview(buffer)
+    buffer = (ctypes.c_ubyte * length).from_buffer_copy(
+      self.__fileMmapView[idx : idx + length]
+    )
+    libpicoRawPtr = libpico.getLibpicoCsiFromBuffer(buffer, length, True)
 
-      f.seek(idx)
-      f.readinto(bufferMv)
-      libpicoRawPtr = self.__lib.getLibpicoCsiFromBuffer(buffer, length, True)
+    timestamp, csiNp, magNp, phaseNp = self.libpicoFrame2timedCsi(
+      libpicoRawPtr.contents
+    )
+    libpico.freeLibpicoRaw(libpicoRawPtr)
+    return timestamp, csiNp, magNp, phaseNp
 
-      return libpicoFrame2timedCsi(libpicoRawPtr.contents)
+  def libpicoFrame2timedCsi(
+    self, raw: LibpicoRaw, interpolate: bool = False
+  ) -> tuple[np.datetime64, np.ndarray, np.ndarray, np.ndarray]:
+    rawTimesteampNs: int = raw.rxSBasic.systemTime
+    timestamp = np.datetime64(rawTimesteampNs, "ns")
+
+    shape: tuple = (raw.csi.nTones, raw.csi.nTx, raw.csi.nRx)
+
+    csiSize = raw.csi.csiSize
+    realNp = self.npFromFloatPtr(raw.csi.csiRealPtr, csiSize)
+    imgNp = self.npFromFloatPtr(raw.csi.csiImagPtr, csiSize)
+    csiNp = realNp + 1j * imgNp
+    csiNp = csiNp.reshape(shape)
+
+    magNp = self.npFromFloatPtr(raw.csi.magnitudePtr, raw.csi.magnitudeSize).reshape(
+      shape
+    )
+    phaseNp = self.npFromFloatPtr(raw.csi.phasePtr, raw.csi.phaseSize).reshape(shape)
+
+    if not interpolate:
+      size = raw.csi.subcarrierIndicesSize
+      subcarrierIdx = tuple(raw.csi.subcarrierIndicesPtr[i] for i in range(size))
+      csiNp = self.removeInterpolation(csiNp, subcarrierIdx)
+      magNp = self.removeInterpolation(magNp, subcarrierIdx)
+      phaseNp = self.removeInterpolation(phaseNp, subcarrierIdx)
+
+    return timestamp, csiNp, magNp, phaseNp
+
+  @staticmethod
+  def npFromFloatPtr(ptr, size, dtype=np.float32) -> np.ndarray:
+    return np.frombuffer(
+      (ctypes.c_float * size).from_address(ctypes.addressof(ptr.contents)),
+      dtype=dtype,
+    )
+
+  @staticmethod
+  def removeInterpolation(csi: np.ndarray, subcarrierIdx: tuple) -> np.ndarray:
+    interpolatedSubcarrierIdx = (-1, 0, 1)
+    realSubcarrierIdx = np.nonzero(~np.isin(subcarrierIdx, interpolatedSubcarrierIdx))
+    return csi[realSubcarrierIdx]
+
+  @staticmethod
+  def timedCsi2numpy(
+    dataList: list[tuple[np.datetime64, np.ndarray, np.ndarray, np.ndarray]],
+  ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    timestampNp = np.array([x[0] for x in dataList])
+    csiNp = np.array([x[1] for x in dataList])
+    magNp = np.array([x[2] for x in dataList])
+    phaseNp = np.array([x[3] for x in dataList])
+
+    return timestampNp, csiNp, magNp, phaseNp
