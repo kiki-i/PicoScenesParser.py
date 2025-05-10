@@ -5,8 +5,8 @@ from pathlib import Path
 from tqdm import tqdm
 import numpy as np
 
-from parsecli import parseCli
-from PicoParser import Parser
+from src.parsecli import parseCli
+from src.PicoParser import Parser
 
 
 if __name__ == "__main__":
@@ -21,7 +21,7 @@ if __name__ == "__main__":
         outDir.mkdir(parents=True, exist_ok=True)
 
         frameIndices = parser.scanFile()
-        parsedList = parser.parseFile(frameIndices, 4)
+        parsedList = parser.parseFile(frameIndices)
         timestampNp, csiNp, magNp, phaseNp = parser.timedCsi2numpy(parsedList)
 
         if "timestamp" in args.types:

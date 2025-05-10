@@ -8,7 +8,7 @@ import sys
 
 import numpy as np
 
-from libpicoFrame import LibpicoRaw
+from .libpicoFrame import LibpicoRaw
 
 
 if sys.platform == "win32":
@@ -59,12 +59,12 @@ class Parser:
     return frameIndices
 
   def parseFile(
-    self, frameIndices: list[tuple[int, int]], setThread: int = 0
+    self, frameIndices: list[tuple[int, int]], nThread: int = 4
   ) -> list[tuple[np.datetime64, np.ndarray, np.ndarray, np.ndarray]]:
     maxWorkers = max(1, ((os.cpu_count() or 1) + 1) // 2)
-    nWorkers = setThread if 0 < setThread < maxWorkers else maxWorkers
+    limitedWorkers = nThread if 0 < nThread < maxWorkers else maxWorkers
 
-    with ThreadPoolExecutor(max_workers=nWorkers) as executor:
+    with ThreadPoolExecutor(max_workers=limitedWorkers) as executor:
       timedCsi = list(executor.map(self.parseLibpicoFrame, frameIndices))
     return timedCsi
 
@@ -109,6 +109,10 @@ class Parser:
       csiNp = self.removeInterpolation(csiNp, subcarrierIdx)
       magNp = self.removeInterpolation(magNp, subcarrierIdx)
       phaseNp = self.removeInterpolation(phaseNp, subcarrierIdx)
+    else:
+      csiNp = csiNp.copy()
+      magNp = magNp.copy()
+      phaseNp = phaseNp.copy()
 
     return timestamp, csiNp, magNp, phaseNp
 
