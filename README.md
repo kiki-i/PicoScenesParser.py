@@ -21,7 +21,6 @@ optional arguments:
 
 * [libpico](https://github.com/kiki-i/libpico)
 * numpy
-* tqdm
 
 ## License
 

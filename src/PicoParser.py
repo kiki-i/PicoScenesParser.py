@@ -34,6 +34,8 @@ class Parser:
     self.__fileMmap = mmap.mmap(self.__file.fileno(), 0, access=mmap.ACCESS_READ)
     self.__fileMmapView = memoryview(self.__fileMmap)
 
+    self.__interpolatedSubcarrierIdx = np.array([-1, 0, 1])
+
   def __enter__(self):
     return self
 
@@ -49,8 +51,7 @@ class Parser:
     mmView = self.__fileMmapView
     idx = 0
     while idx + 4 <= fileSize:
-      payloadLenBuffer = mmView[idx : idx + 4]
-      payloadLen = struct.unpack("<I", payloadLenBuffer)[0]
+      payloadLen = struct.unpack("<I", mmView[idx : idx + 4])[0]
       if payloadLen <= 0 or idx + (frameLength := 4 + payloadLen) > fileSize:
         break
       frameIndices.append((idx, frameLength))
@@ -90,22 +91,24 @@ class Parser:
     rawTimesteampNs: int = raw.rxSBasic.systemTime
     timestamp = np.datetime64(rawTimesteampNs, "ns")
 
-    shape: tuple = (raw.csi.nTones, raw.csi.nTx, raw.csi.nRx)
-
-    csiSize = raw.csi.csiSize
-    realNp = self.npFromFloatPtr(raw.csi.csiRealPtr, csiSize)
-    imgNp = self.npFromFloatPtr(raw.csi.csiImagPtr, csiSize)
-    csiNp = realNp + 1j * imgNp
-    csiNp = csiNp.reshape(shape)
-
-    magNp = self.npFromFloatPtr(raw.csi.magnitudePtr, raw.csi.magnitudeSize).reshape(
-      shape
+    shape: tuple = (
+      raw.csi.nTones,
+      raw.csi.nTx,
+      raw.csi.nRx,
+      raw.csi.nEss + raw.csi.nCsi,
     )
-    phaseNp = self.npFromFloatPtr(raw.csi.phasePtr, raw.csi.phaseSize).reshape(shape)
+
+    realNp = np.ctypeslib.as_array(raw.csi.csiRealPtr, shape)
+    imgNp = np.ctypeslib.as_array(raw.csi.csiImagPtr, shape)
+    csiNp = realNp + 1j * imgNp
+
+    magNp = np.ctypeslib.as_array(raw.csi.magnitudePtr, shape)
+    phaseNp = np.ctypeslib.as_array(raw.csi.phasePtr, shape)
 
     if not interpolate:
-      size = raw.csi.subcarrierIndicesSize
-      subcarrierIdx = tuple(raw.csi.subcarrierIndicesPtr[i] for i in range(size))
+      subcarrierIdx = np.ctypeslib.as_array(
+        raw.csi.subcarrierIndicesPtr, (raw.csi.subcarrierIndicesSize,)
+      )
       csiNp = self.removeInterpolation(csiNp, subcarrierIdx)
       magNp = self.removeInterpolation(magNp, subcarrierIdx)
       phaseNp = self.removeInterpolation(phaseNp, subcarrierIdx)
@@ -116,21 +119,16 @@ class Parser:
 
     return timestamp, csiNp, magNp, phaseNp
 
-  @staticmethod
-  def npFromFloatPtr(ptr, size, dtype=np.float32) -> np.ndarray:
-    return np.frombuffer(
-      (ctypes.c_float * size).from_address(ctypes.addressof(ptr.contents)),
-      dtype=dtype,
-    )
-
-  @staticmethod
-  def removeInterpolation(csi: np.ndarray, subcarrierIdx: tuple) -> np.ndarray:
-    interpolatedSubcarrierIdx = (-1, 0, 1)
-    realSubcarrierIdx = np.nonzero(~np.isin(subcarrierIdx, interpolatedSubcarrierIdx))
+  def removeInterpolation(
+    self, csi: np.ndarray, subcarrierIdx: np.ndarray
+  ) -> np.ndarray:
+    realSubcarrierIdx = np.nonzero(
+      ~np.isin(subcarrierIdx, self.__interpolatedSubcarrierIdx)
+    )[0]
     return csi[realSubcarrierIdx]
 
   @staticmethod
-  def timedCsi2numpy(
+  def timedCsi2Np(
     dataList: list[tuple[np.datetime64, np.ndarray, np.ndarray, np.ndarray]],
   ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     timestampNp = np.array([x[0] for x in dataList])
