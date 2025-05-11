@@ -16,15 +16,15 @@ if sys.platform == "win32":
 else:
   libpico = ctypes.CDLL("./libpico.so")
 
-libpico.getLibpicoCsiFromBuffer.restype = ctypes.POINTER(LibpicoRaw)
-libpico.getLibpicoCsiFromBuffer.argtypes = [
+libpico.getLibpicoFrameFromBuffer.restype = ctypes.POINTER(LibpicoRaw)
+libpico.getLibpicoFrameFromBuffer.argtypes = [
   ctypes.POINTER(ctypes.c_uint8),
   ctypes.c_uint32,
   ctypes.c_bool,
 ]
 
-libpico.freeLibpicoRaw.restype = ctypes.c_bool
-libpico.freeLibpicoRaw.argtypes = [ctypes.POINTER(LibpicoRaw)]
+libpico.freeLibpicoFrame.restype = ctypes.c_bool
+libpico.freeLibpicoFrame.argtypes = [ctypes.POINTER(LibpicoRaw)]
 
 
 class Parser:
@@ -76,12 +76,12 @@ class Parser:
     buffer = (ctypes.c_ubyte * length).from_buffer_copy(
       self.__fileMmapView[idx : idx + length]
     )
-    libpicoRawPtr = libpico.getLibpicoCsiFromBuffer(buffer, length, True)
+    libpicoRawPtr = libpico.getLibpicoFrameFromBuffer(buffer, length, True)
 
     timestamp, csiNp, magNp, phaseNp = self.libpicoFrame2timedCsi(
       libpicoRawPtr.contents
     )
-    libpico.freeLibpicoRaw(libpicoRawPtr)
+    libpico.freeLibpicoFrame(libpicoRawPtr)
     return timestamp, csiNp, magNp, phaseNp
 
   def libpicoFrame2timedCsi(
