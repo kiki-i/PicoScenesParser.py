@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Iterator, Iterable
 import ctypes
 import mmap
 import os
@@ -44,23 +45,20 @@ class Parser:
     self.__fileMmap.close()
     self.__file.close()
 
-  def scanFile(self) -> list[tuple[int, int]]:
+  def iterFrameIdx(self) -> Iterator[tuple[int, int]]:
     fileSize = os.path.getsize(self.__filePath)
-    frameIndices: list[tuple[int, int]] = []
-
     mmView = self.__fileMmapView
+
     idx = 0
     while idx + 4 <= fileSize:
       payloadLen = struct.unpack("<I", mmView[idx : idx + 4])[0]
       if payloadLen <= 0 or idx + (frameLength := 4 + payloadLen) > fileSize:
         break
-      frameIndices.append((idx, frameLength))
+      yield (idx, frameLength)
       idx += frameLength
 
-    return frameIndices
-
-  def parseFile(
-    self, frameIndices: list[tuple[int, int]], nThread: int = 4
+  def parseFrames(
+    self, frameIndices: Iterable[tuple[int, int]], nThread: int = 4
   ) -> list[tuple[np.datetime64, np.ndarray, np.ndarray, np.ndarray]]:
     maxWorkers = max(1, ((os.cpu_count() or 1) + 1) // 2)
     limitedWorkers = nThread if 0 < nThread < maxWorkers else maxWorkers
@@ -126,14 +124,3 @@ class Parser:
       ~np.isin(subcarrierIdx, self.__interpolatedSubcarrierIdx)
     )[0]
     return csi[realSubcarrierIdx]
-
-  @staticmethod
-  def timedCsi2Np(
-    dataList: list[tuple[np.datetime64, np.ndarray, np.ndarray, np.ndarray]],
-  ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    timestampNp = np.array([x[0] for x in dataList])
-    csiNp = np.array([x[1] for x in dataList])
-    magNp = np.array([x[2] for x in dataList])
-    phaseNp = np.array([x[3] for x in dataList])
-
-    return timestampNp, csiNp, magNp, phaseNp
