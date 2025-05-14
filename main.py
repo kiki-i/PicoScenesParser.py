@@ -10,8 +10,9 @@ from src.parsecli import parseCli
 from src.PicoParser import Parser
 
 
-def nowTag() -> str:
-  return datetime.now().strftime("[%H:%M:%S]")
+def printInfo(info: str):
+  now = datetime.now().strftime("%H:%M:%S")
+  print(f"[{now}] {info}")
 
 
 if __name__ == "__main__":
@@ -24,12 +25,13 @@ if __name__ == "__main__":
 
   for file in fileList:
     filePath = Path(file).expanduser()
-    print(f"{nowTag()} Convert {filePath.name}...")
+    printInfo(f"Convert {filePath.name}:")
 
     with Parser(filePath) as parser:
       if any([args.timestamp, args.csi, args.magnitude, args.phase]):
         outDir.mkdir(parents=True, exist_ok=True)
 
+        printInfo("Parsing frames...")
         frameIndices = parser.iterFrameIdx()
         timestampList, csiList, magList, phaseList = parser.parseFrames(
           frameIndices,
@@ -39,6 +41,7 @@ if __name__ == "__main__":
           args.phase,
         )
 
+        printInfo("Saving...")
         if args.timestamp:
           filename = filePath.with_suffix(".timestamp.npy").name
           np.save(outDir / filename, timestampList)
@@ -56,4 +59,4 @@ if __name__ == "__main__":
           np.save(outDir / filename, phaseList)
           del phaseList
 
-    print(f"{nowTag()} Done!")
+    printInfo("Done!")
