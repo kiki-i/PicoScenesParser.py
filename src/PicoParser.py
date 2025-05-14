@@ -58,18 +58,42 @@ class Parser:
       idx += frameLength
 
   def parseFrames(
-    self, frameIndices: Iterable[tuple[int, int]], nThread: int = 4
-  ) -> list[tuple[np.datetime64, np.ndarray, np.ndarray, np.ndarray]]:
+    self,
+    frameIndices: Iterable[tuple[int, int]],
+    enableTs=bool,
+    enableCsi=bool,
+    enableMag=bool,
+    enablePhase=bool,
+    nThread: int = 4,
+  ) -> Iterator:
     maxWorkers = max(1, ((os.cpu_count() or 1) + 1) // 2)
     limitedWorkers = nThread if 0 < nThread < maxWorkers else maxWorkers
 
     with ThreadPoolExecutor(max_workers=limitedWorkers) as executor:
-      timedCsi = list(executor.map(self.parseLibpicoFrame, frameIndices))
-    return timedCsi
+      timedCsi = list(
+        executor.map(
+          lambda x: self.parseLibpicoFrame(
+            x,
+            enableTs,
+            enableCsi,
+            enableMag,
+            enablePhase,
+          ),
+          frameIndices,
+        )
+      )
+    return zip(*timedCsi)
 
   def parseLibpicoFrame(
-    self, frameIdx: tuple[int, int]
-  ) -> tuple[np.datetime64, np.ndarray, np.ndarray, np.ndarray]:
+    self,
+    frameIdx: tuple[int, int],
+    enableTs=bool,
+    enableCsi=bool,
+    enableMag=bool,
+    enablePhase=bool,
+  ) -> tuple[
+    np.datetime64 | None, np.ndarray | None, np.ndarray | None, np.ndarray | None
+  ]:
     idx, length = frameIdx
 
     buffer = (ctypes.c_ubyte * length).from_buffer_copy(
@@ -78,16 +102,28 @@ class Parser:
     libpicoRawPtr = libpico.getLibpicoFrameFromBuffer(buffer, length, True)
 
     timestamp, csiNp, magNp, phaseNp = self.libpicoFrame2timedCsi(
-      libpicoRawPtr.contents
+      libpicoRawPtr.contents,
+      enableTs,
+      enableCsi,
+      enableMag,
+      enablePhase,
     )
     libpico.freeLibpicoFrame(libpicoRawPtr)
     return timestamp, csiNp, magNp, phaseNp
 
   def libpicoFrame2timedCsi(
-    self, raw: LibpicoRaw, interpolate: bool = False
-  ) -> tuple[np.datetime64, np.ndarray, np.ndarray, np.ndarray]:
+    self,
+    raw: LibpicoRaw,
+    enableTs=bool,
+    enableCsi=bool,
+    enableMag=bool,
+    enablePhase=bool,
+    interpolate: bool = False,
+  ) -> tuple[
+    np.datetime64 | None, np.ndarray | None, np.ndarray | None, np.ndarray | None
+  ]:
     rawTimesteampNs: int = raw.rxSBasic.systemTime
-    timestamp = np.datetime64(rawTimesteampNs, "ns")
+    timestamp = np.datetime64(rawTimesteampNs, "ns") if enableTs else None
 
     shape: tuple = (
       raw.csi.nTones,
@@ -107,19 +143,17 @@ class Parser:
       subcarrierIdx = np.ctypeslib.as_array(
         raw.csi.subcarrierIndicesPtr, (raw.csi.subcarrierIndicesSize,)
       )
-      csiNp = self.removeInterpolation(csiNp, subcarrierIdx)
-      magNp = self.removeInterpolation(magNp, subcarrierIdx)
-      phaseNp = self.removeInterpolation(phaseNp, subcarrierIdx)
+      csiNp = self.removeInterp(csiNp, subcarrierIdx) if enableCsi else None
+      magNp = self.removeInterp(magNp, subcarrierIdx) if enableMag else None
+      phaseNp = self.removeInterp(phaseNp, subcarrierIdx) if enablePhase else None
     else:
-      csiNp = csiNp.copy()
-      magNp = magNp.copy()
-      phaseNp = phaseNp.copy()
+      csiNp = csiNp.copy() if enableCsi else None
+      magNp = magNp.copy() if enableMag else None
+      phaseNp = phaseNp.copy() if enablePhase else None
 
     return timestamp, csiNp, magNp, phaseNp
 
-  def removeInterpolation(
-    self, csi: np.ndarray, subcarrierIdx: np.ndarray
-  ) -> np.ndarray:
+  def removeInterp(self, csi: np.ndarray, subcarrierIdx: np.ndarray) -> np.ndarray:
     realSubcarrierIdx = np.nonzero(
       ~np.isin(subcarrierIdx, self.__interpolatedSubcarrierIdx)
     )[0]

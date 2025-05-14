@@ -1,16 +1,7 @@
-from dataclasses import dataclass
 import argparse
-import glob
 
 
-@dataclass
-class Args:
-  files: list[str]
-  outDir: str
-  types: frozenset
-
-
-def parseCli() -> Args:
+def parseCli():
   description = "Convert PicoScenes .csi file to numpy .npy file"
   parser = argparse.ArgumentParser(description=description)
   parser.add_argument(
@@ -65,19 +56,4 @@ def parseCli() -> Args:
     default=False,
     help="Enable timestamp output",
   )
-  args = parser.parse_args()
-
-  types = set()
-  if args.csi:
-    types.add("csi")
-  if args.magnitude:
-    types.add("mag")
-  if args.phase:
-    types.add("phase")
-  if args.timestamp:
-    types.add("timestamp")
-
-  files: list[str] = []
-  for input in args.input:
-    files.extend(glob.glob(input, recursive=True))
-  return Args(files=files, outDir=args.output, types=frozenset(types))
+  return parser.parse_args()
