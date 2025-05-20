@@ -19,7 +19,7 @@ optional arguments:
 
 ## Dependencies
 
-* [libpico](https://github.com/kiki-i/libpico)
+* [libpico](https://github.com/kiki-i/libpico): Copy `libpico.dll` (Windows) or `libpico.so`  (Linux) to the same dictionary as `PicoScenesToolbox.py/main.py`.
 * numpy
 
 ## License
