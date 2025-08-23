@@ -5,39 +5,22 @@ import ctypes
 import mmap
 import os
 import struct
-import sys
 
 import numpy as np
 
-from .libpicoFrame import LibpicoRaw
-
-
-if sys.platform == "win32":
-  libpico = ctypes.CDLL("./libpico.dll")
-else:
-  libpico = ctypes.CDLL("./libpico.so")
-
-libpico.getLibpicoFrameFromBuffer.restype = ctypes.POINTER(LibpicoRaw)
-libpico.getLibpicoFrameFromBuffer.argtypes = [
-  ctypes.POINTER(ctypes.c_uint8),
-  ctypes.c_uint32,
-  ctypes.c_bool,
-]
-
-libpico.freeLibpicoFrame.restype = ctypes.c_bool
-libpico.freeLibpicoFrame.argtypes = [ctypes.POINTER(LibpicoRaw)]
+from .libpico import libpico, LibpicoRaw
 
 
 class Parser:
-  def __init__(self, filePath: Path) -> None:
+  __interpSubcarrierIdx = np.array([-1, 0, 1])
+
+  def __init__(self, filePath: Path):
     self.__filePath = filePath
+
+  def __enter__(self):
     self.__file = open(self.__filePath, "rb")
     self.__fileMmap = mmap.mmap(self.__file.fileno(), 0, access=mmap.ACCESS_READ)
     self.__fileMmapView = memoryview(self.__fileMmap)
-
-    self.__interpolatedSubcarrierIdx = np.array([-1, 0, 1])
-
-  def __enter__(self):
     return self
 
   def __exit__(self, exc_type, exc_val, exc_tb):
@@ -57,40 +40,59 @@ class Parser:
       yield (idx, frameLength)
       idx += frameLength
 
+  def iterFrame(
+    self,
+  ) -> Iterator[tuple[np.datetime64, np.ndarray, np.ndarray, np.ndarray]]:
+    for idx in self.iterFrameIdx():
+      yield self.parseLibpicoFrame(idx, True, True, True, True)
+
+  def parseFile(
+    self,
+    enableTs: bool,
+    enableCsi: bool,
+    enableMag: bool,
+    enablePhase: bool,
+    interpolate: bool,
+  ):
+    return self.parseFrames(
+      self.iterFrameIdx(),
+      enableTs,
+      enableCsi,
+      enableMag,
+      enablePhase,
+      interpolate,
+    )
+
   def parseFrames(
     self,
     frameIndices: Iterable[tuple[int, int]],
-    enableTs=bool,
-    enableCsi=bool,
-    enableMag=bool,
-    enablePhase=bool,
-    nThread: int = 4,
+    enableTs: bool,
+    enableCsi: bool,
+    enableMag: bool,
+    enablePhase: bool,
+    interpolate: bool,
+    nWorker: int = 4,
   ) -> Iterator:
-    maxWorkers = max(1, ((os.cpu_count() or 1) + 1) // 2)
-    limitedWorkers = nThread if 0 < nThread < maxWorkers else maxWorkers
+    maxWorker = max(1, (os.cpu_count() or 1) // 2)
 
-    with ThreadPoolExecutor(max_workers=limitedWorkers) as executor:
-      timedCsi = list(
-        executor.map(
-          lambda x: self.parseLibpicoFrame(
-            x,
-            enableTs,
-            enableCsi,
-            enableMag,
-            enablePhase,
-          ),
-          frameIndices,
-        )
+    with ThreadPoolExecutor(min(nWorker, maxWorker)) as executor:
+      timedCsi = executor.map(
+        lambda x: self.parseLibpicoFrame(
+          x, enableTs, enableCsi, enableMag, enablePhase, interpolate
+        ),
+        frameIndices,
       )
+
     return zip(*timedCsi)
 
   def parseLibpicoFrame(
     self,
     frameIdx: tuple[int, int],
-    enableTs=bool,
-    enableCsi=bool,
-    enableMag=bool,
-    enablePhase=bool,
+    enableTs: bool,
+    enableCsi: bool,
+    enableMag: bool,
+    enablePhase: bool,
+    interpolate: bool,
   ) -> tuple[
     np.datetime64 | None, np.ndarray | None, np.ndarray | None, np.ndarray | None
   ]:
@@ -101,24 +103,20 @@ class Parser:
     )
     libpicoRawPtr = libpico.getLibpicoFrameFromBuffer(buffer, length, True)
 
-    timestamp, csiNp, magNp, phaseNp = self.libpicoFrame2timedCsi(
-      libpicoRawPtr.contents,
-      enableTs,
-      enableCsi,
-      enableMag,
-      enablePhase,
+    timestamp, csiNp, magNp, phaseNp = self.libpicoFrame2Ndarray(
+      libpicoRawPtr.contents, enableTs, enableCsi, enableMag, enablePhase, interpolate
     )
     libpico.freeLibpicoFrame(libpicoRawPtr)
     return timestamp, csiNp, magNp, phaseNp
 
-  def libpicoFrame2timedCsi(
+  def libpicoFrame2Ndarray(
     self,
     raw: LibpicoRaw,
-    enableTs=bool,
-    enableCsi=bool,
-    enableMag=bool,
-    enablePhase=bool,
-    interpolate: bool = False,
+    enableTs: bool,
+    enableCsi: bool,
+    enableMag: bool,
+    enablePhase: bool,
+    interpolate: bool,
   ) -> tuple[
     np.datetime64 | None, np.ndarray | None, np.ndarray | None, np.ndarray | None
   ]:
@@ -129,7 +127,7 @@ class Parser:
       raw.csi.nTones,
       raw.csi.nTx,
       raw.csi.nRx,
-      raw.csi.nEss + raw.csi.nCsi,
+      raw.csi.nCsi + raw.csi.nEss,
     )
 
     realNp = np.ctypeslib.as_array(raw.csi.csiRealPtr, shape)
@@ -154,7 +152,7 @@ class Parser:
     return timestamp, csiNp, magNp, phaseNp
 
   def removeInterp(self, csi: np.ndarray, subcarrierIdx: np.ndarray) -> np.ndarray:
-    realSubcarrierIdx = np.nonzero(
-      ~np.isin(subcarrierIdx, self.__interpolatedSubcarrierIdx)
-    )[0]
+    realSubcarrierIdx = np.nonzero(~np.isin(subcarrierIdx, self.__interpSubcarrierIdx))[
+      0
+    ]
     return csi[realSubcarrierIdx]
