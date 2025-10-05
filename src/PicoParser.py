@@ -13,13 +13,14 @@ from .libpico import libpico, LibpicoRaw
 
 class Parser:
   __interpSubcarrierIdx = np.array([-1, 0, 1])
+  __maxWorker = max(1, (os.cpu_count() or 1) // 2)
 
   def __init__(self, filePath: Path):
     self.__filePath = filePath
 
   def __enter__(self):
     self.__file = open(self.__filePath, "rb")
-    self.__fileMmap = mmap.mmap(self.__file.fileno(), 0, access=mmap.ACCESS_READ)
+    self.__fileMmap = mmap.mmap(self.__file.fileno(), 0, access=mmap.ACCESS_COPY)
     self.__fileMmapView = memoryview(self.__fileMmap)
     return self
 
@@ -73,9 +74,7 @@ class Parser:
     interpolate: bool,
     nWorker: int = 4,
   ) -> Iterator:
-    maxWorker = max(1, (os.cpu_count() or 1) // 2)
-
-    with ThreadPoolExecutor(min(nWorker, maxWorker)) as executor:
+    with ThreadPoolExecutor(min(nWorker, self.__maxWorker)) as executor:
       timedCsi = executor.map(
         lambda x: self.parseLibpicoFrame(
           x, enableTs, enableCsi, enableMag, enablePhase, interpolate
@@ -98,7 +97,7 @@ class Parser:
   ]:
     idx, length = frameIdx
 
-    buffer = (ctypes.c_ubyte * length).from_buffer_copy(
+    buffer = (ctypes.c_ubyte * length).from_buffer(
       self.__fileMmapView[idx : idx + length]
     )
     libpicoRawPtr = libpico.getLibpicoFrameFromBuffer(buffer, length, True)
