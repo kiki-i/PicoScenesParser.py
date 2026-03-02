@@ -2,12 +2,70 @@
 
 from datetime import datetime
 from pathlib import Path
+import argparse
 import glob
+import os
 
+from picoparser import PicoParser
 import numpy as np
 
-from src.parsecli import parseCli
-from src.PicoParser import Parser
+
+def parseCli():
+  description = "Convert PicoScenes .csi file to numpy .npy file"
+  parser = argparse.ArgumentParser(description=description)
+  parser.add_argument(
+    "-i",
+    "--input",
+    type=str,
+    nargs="+",
+    metavar="",
+    help="Specify input .csi file",
+  )
+  parser.add_argument(
+    "-o",
+    "--output",
+    type=str,
+    metavar="",
+    default="out",
+    help='Specify output directory, default = "out"',
+  )
+  parser.add_argument(
+    "-c",
+    "--csi",
+    metavar="",
+    action="store_const",
+    const=True,
+    default=False,
+    help="Enable complex CSI output",
+  )
+  parser.add_argument(
+    "-m",
+    "--magnitude",
+    metavar="",
+    action="store_const",
+    const=True,
+    default=False,
+    help="Enable magnitude output",
+  )
+  parser.add_argument(
+    "-p",
+    "--phase",
+    metavar="",
+    action="store_const",
+    const=True,
+    default=False,
+    help="Enable phase output (with cyclic shift delay removed)",
+  )
+  parser.add_argument(
+    "-t",
+    "--timestamp",
+    metavar="",
+    action="store_const",
+    const=True,
+    default=False,
+    help="Enable timestamp output",
+  )
+  return parser.parse_args()
 
 
 def printInfo(info: str, indentLevel=0):
@@ -31,31 +89,31 @@ if __name__ == "__main__":
     printInfo(f"Converting {filePath.name}:")
 
     if any([args.timestamp, args.csi, args.magnitude, args.phase]):
-      with Parser(filePath) as parser:
+      with PicoParser(filePath, os.cpu_count() // 2) as parser:
         outDir.mkdir(parents=True, exist_ok=True)
 
         printInfo("Parsing frames...", 1)
-        timestampList, csiList, magList, phaseList = parser.parseFile(
+        tstampNdarray, csiNdarray, magNdarray, phaseNdarray = parser.getNdarray(
           args.timestamp, args.csi, args.magnitude, args.phase, False
         )
 
       printInfo("Saving...", 1)
-      if args.timestamp:
+      if tstampNdarray is not None:
         filename = filePath.with_suffix(".tstamp.npy").name
-        np.save(outDir / filename, timestampList)
-        del timestampList
-      if args.csi:
+        np.save(outDir / filename, tstampNdarray)
+        del tstampNdarray
+      if csiNdarray is not None:
         filename = filePath.with_suffix(".csi.npy").name
-        np.save(outDir / filename, csiList)
-        del csiList
-      if args.magnitude:
+        np.save(outDir / filename, csiNdarray)
+        del csiNdarray
+      if magNdarray is not None:
         filename = filePath.with_suffix(".mag.npy").name
-        np.save(outDir / filename, magList)
-        del magList
-      if args.phase:
+        np.save(outDir / filename, magNdarray)
+        del magNdarray
+      if phaseNdarray is not None:
         filename = filePath.with_suffix(".phase.npy").name
-        np.save(outDir / filename, phaseList)
-        del phaseList
+        np.save(outDir / filename, phaseNdarray)
+        del phaseNdarray
       printInfo("Done!", 1)
 
     else:

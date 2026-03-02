@@ -2,7 +2,7 @@
 
 Convert PicoScenes `.csi` file to numpy `.npy` file with multithreaded parsing. Provides **faster** performance with significantly **lower memory usage** compared to [PicoScenes-Python-Toolbox](https://github.com/wifisensing/PicoScenes-Python-Toolbox).
 
-An example using the [libpico](https://github.com/kiki-i/libpico) dynamic link library.
+An example using the [PicoParser.py](https://github.com/kiki-i/PicoParser.py) library.
 
 ## Usage
 
@@ -19,7 +19,7 @@ optional arguments:
 
 ## Dependencies
 
-* [libpico](https://github.com/kiki-i/libpico): Copy `libpico.dll` (Windows) or `libpico.so`  (Linux) to the same directory as `PicoScenesParser.py/main.py`.
+* [PicoParser.py](https://github.com/kiki-i/PicoParser.py): Install the library according its `README.md`.
 * numpy
 
 ## License
