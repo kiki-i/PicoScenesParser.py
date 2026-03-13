@@ -22,6 +22,10 @@ optional arguments:
 * [PicoParser.py](https://github.com/kiki-i/PicoParser.py): Install the library according its `README.md`.
 * numpy
 
+## If you find this helpful
+
+Please cite [**my works**](https://scholar.google.com/citations?user=XiudsEIAAAAJ).
+
 ## License
 
 [![AGPLv3](https://www.gnu.org/graphics/agplv3-with-text-162x68.png)](https://www.gnu.org/licenses/agpl-3.0.html)
